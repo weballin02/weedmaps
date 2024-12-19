@@ -11,10 +11,10 @@ jobs:
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: 3.9
 
@@ -27,7 +27,7 @@ jobs:
         pyinstaller --onefile windows_order_scraper.py
 
     - name: Upload Executable
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: windows-order-scraper-exe
         path: dist/windows_order_scraper.exe
