@@ -64,7 +64,7 @@ st.markdown(
 
 # === Configuration Variables ===
 CHROME_DEBUGGER_PORT = 9222
-TEST_MODE = True  # Limit to 1 order in test mode
+TEST_MODE = False  # Set to False to scrape all orders
 CSV_FILE_NAME = 'filtered_orders_data.csv'  # CSV file name to save order data
 ALL_ORDERS_URL = 'https://admin.weedmaps.com/orders'
 
@@ -73,14 +73,19 @@ if 'driver' not in st.session_state:
     st.session_state.driver = None
 
 def get_app_dir():
-    """ Returns the directory where the script is located. """
+    """
+    Returns the directory where the script is located.
+    """
     if hasattr(sys, '_MEIPASS'):
         return os.path.dirname(sys.executable)
     else:
         return os.path.dirname(os.path.abspath(__file__))
 
 def launch_chrome_in_debug_mode(port=CHROME_DEBUGGER_PORT):
-    """ Launch Chrome in remote debugging mode. """
+    """
+    Launch Chrome in remote debugging mode on the specified port.
+    For macOS, uses 'open', for Windows and Linux uses direct commands.
+    """
     system = platform.system()
     if system == "Darwin":  # macOS
         subprocess.Popen(["open", "-a", "Google Chrome", "--args", f"--remote-debugging-port={port}"])
@@ -92,14 +97,19 @@ def launch_chrome_in_debug_mode(port=CHROME_DEBUGGER_PORT):
     time.sleep(3)  # Wait for Chrome to start
 
 def initialize_driver():
-    """ Initialize Selenium WebDriver with debugging options. """
+    """
+    Initialize Selenium WebDriver with debugging options and return the driver instance.
+    """
     chrome_options = Options()
     chrome_options.debugger_address = f"localhost:{CHROME_DEBUGGER_PORT}"
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     return driver
 
 def save_order_data(order_data, csv_file_name):
-    """ Save order data to CSV file. """
+    """
+    Save order data to a CSV file with specified filename.
+    Append if file exists, otherwise write header first.
+    """
     app_dir = get_app_dir()
     csv_path = os.path.join(app_dir, csv_file_name)
     file_exists = os.path.isfile(csv_path)
@@ -113,25 +123,47 @@ def save_order_data(order_data, csv_file_name):
     st.write(f"Scraped data saved to: {csv_path}")
 
 def scrape_orders(driver):
-    """ Scrape order data from Weedmaps. """
+    """
+    Scrape all order data from Weedmaps.
+    Steps:
+      1. Wait for the page to load and locate all order links.
+      2. Extract all order URLs and store them in a list.
+      3. Iterate over these URLs to scrape detailed information.
+    """
+    # Ensure main orders page is fully loaded
     WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'table__TableRow-sc-xx3up4-13')))
+
+    # Collect all order URLs once
     orders = driver.find_elements(By.XPATH, "//a[@class='order-id-link__IDLink-sc-a7pvg2-0 idfeRm']")
-    total_orders = len(orders)
+    order_urls = [o.get_attribute('href') for o in orders]
+
+    total_orders = len(order_urls)
     max_orders = 1 if TEST_MODE else total_orders
     order_data = []
 
-    for idx, order in enumerate(orders[:max_orders], start=1):
+    for idx, order_url in enumerate(order_urls[:max_orders]):
         try:
-            order_url = order.get_attribute('href')
             driver.get(order_url)
+            # Wait for order details page to load
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]"))
+            )
 
-            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]")))
+            # Extract order details
+            order_number = driver.find_element(By.XPATH, "//span[contains(@class, 'styles__OrderId')]") \
+                                 .text.strip().replace('Order #', '')
+            customer_name = driver.find_element(By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]") \
+                                  .text.strip()
+            phone_number = driver.find_element(
+                By.XPATH,
+                "//p[contains(text(), 'Phone number')]/following-sibling::div"
+            ).text.strip()
+            email_address = driver.find_element(
+                By.XPATH,
+                "//p[contains(text(), 'Email address')]/following-sibling::p"
+            ).text.strip()
 
-            order_number = driver.find_element(By.XPATH, "//span[contains(@class, 'styles__OrderId')]").text.strip().replace('Order #', '')
-            customer_name = driver.find_element(By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]").text.strip()
-            phone_number = driver.find_element(By.XPATH, "//p[contains(text(), 'Phone number')]/following-sibling::div").text.strip()
-            email_address = driver.find_element(By.XPATH, "//p[contains(text(), 'Email address')]/following-sibling::p").text.strip()
-
+            # Append data to list
             order_data.append({
                 'Order URL': order_url,
                 'Order Number': order_number,
@@ -139,15 +171,14 @@ def scrape_orders(driver):
                 'Phone Number': phone_number,
                 'Email Address': email_address
             })
-
-            if idx < max_orders:
-                driver.get(ALL_ORDERS_URL)
         except Exception as e:
-            st.error(f"Error processing order #{idx}: {e}")
+            st.error(f"Error processing order #{idx+1}: {e}")
             continue
 
+    # Save all scraped data
     save_order_data(order_data, CSV_FILE_NAME)
     return total_orders, len(order_data)
+
 
 # === SIDEBAR FOR INSTRUCTIONS & BRANDING ===
 with st.sidebar:
@@ -155,7 +186,7 @@ with st.sidebar:
     with st.expander("Instructions 🍃"):
         st.write("""
         1. Click **Open Chrome** to launch Chrome in debug mode.
-        2. Use the opened Chrome window to filter the orders as desired.
+        2. Use the opened Chrome window to navigate and filter orders as desired.
         3. Click **Scrape Orders** to begin fetching your order data.
         """)
     st.markdown("Crafted with care for cannabis operators 🌱")
@@ -170,7 +201,7 @@ if st.button('Open Chrome'):
     try:
         st.session_state.driver = initialize_driver()
         st.session_state.driver.get(ALL_ORDERS_URL)
-        st.success("Chrome is ready! Set the date range manually, then click 'Scrape Orders'. ✅")
+        st.success("Chrome is ready! Set the date range or filters manually in the opened browser, then click 'Scrape Orders'. ✅")
     except Exception as e:
         st.error(f"Failed to initialize Chrome: {e}")
 
