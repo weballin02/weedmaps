@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 
+=======
+>>>>>>> 57d0a95341ff33fc3f026d6b1127d13ab9232ad0
 import os
 import sys
 import time
