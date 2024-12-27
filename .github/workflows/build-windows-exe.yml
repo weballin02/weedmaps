@@ -1,8 +1,8 @@
 name: Build Windows Executable
 
-on: 
+on:
   push:
-    branches: 
+    branches:
       - main
 
 jobs:
@@ -10,25 +10,25 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.9
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
 
-    - name: Install Dependencies
-      run: |
-        pip install pyinstaller
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
 
-    - name: Build Executable
-      run: |
-        pyinstaller --onefile windows_order_scraper.py
+      - name: Build Executable
+        run: pyinstaller --onefile scraper2.py
 
-    - name: Upload Executable
-      uses: actions/upload-artifact@v3
-      with:
-        name: windows-order-scraper-exe
-        path: dist/windows_order_scraper.exe
-
+      - name: Upload Executable
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraper2-executable
+          path: dist/
