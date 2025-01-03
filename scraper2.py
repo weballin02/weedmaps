@@ -35,12 +35,12 @@ st.set_page_config(
     layout="centered"
 )
 
-# === Responsive Styling for Mobile ===
+# === Minimal Responsive Styling ===
 st.markdown(
     """
     <style>
     h1, h2, h3, h4, h5, h6 { color: #2E7D32; }
-    .stButton > button { background-color: #4CAF50; color: white; }
+    .stButton > button { background-color: #4CAF50; color: white; border-radius: 5px; }
     a { color: #2E7D32; }
     </style>
     """,
@@ -49,7 +49,7 @@ st.markdown(
 
 # === Configuration Variables ===
 def find_free_port():
-    """Finds and returns a free port on the host."""
+    """Finds and returns a free port on the host machine."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
         return s.getsockname()[1]
@@ -62,35 +62,72 @@ ALL_ORDERS_URL = 'https://admin.weedmaps.com/orders'
 if 'driver' not in st.session_state:
     st.session_state.driver = None
 
-# === Helper Functions ===
+# -----------------------------------------------------------------------------
+# 1. CROSS-PLATFORM CHROME DETECTION
+# -----------------------------------------------------------------------------
 def get_chrome_path():
-    """Attempts to locate Chrome executable on Windows."""
-    chrome_path = which('chrome')
-    if chrome_path:
-        return chrome_path
-    
-    common_paths = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
-    ]
-    
-    for path in common_paths:
-        if Path(path).exists():
-            return path
+    """
+    Attempts to locate Chrome (or Google Chrome) across macOS, Windows, or Linux.
+    Returns the path if found, otherwise None.
+    """
+
+    system = platform.system().lower()
+
+    # 1. If "which chrome" or "which google-chrome" or "which google-chrome-stable" works:
+    possible_bins = ["chrome", "google-chrome", "google-chrome-stable", "chromium"]
+    for bin_name in possible_bins:
+        found = which(bin_name)
+        if found:
+            return found
+
+    # 2. System-specific common locations
+    if system == "darwin":  # macOS
+        mac_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium"
+        ]
+        for path in mac_paths:
+            if Path(path).exists():
+                return path
+
+    elif system == "windows":
+        common_paths = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
+        ]
+        for path in common_paths:
+            if Path(path).exists():
+                return path
+
+    elif system == "linux":
+        # Already tried which(...) above, but if not found, maybe a fallback
+        linux_paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium"
+        ]
+        for path in linux_paths:
+            if Path(path).exists():
+                return path
+
+    # If none found:
     return None
 
+# -----------------------------------------------------------------------------
+# 2. LAUNCH CHROME IN DEBUG MODE
+# -----------------------------------------------------------------------------
 def launch_chrome_in_debug_mode(port=CHROME_DEBUGGER_PORT):
-    """Launch Chrome in debug mode."""
+    """Launch Chrome in debug mode on the specified port, cross-platform."""
     chrome_path = get_chrome_path()
     if not chrome_path:
-        st.error("Google Chrome not found. Please install Chrome and try again.")
+        st.error("Google Chrome (or Chromium) not found. Please install or update the path.")
         logging.error("Google Chrome executable not found.")
         return False
 
     try:
         subprocess.Popen([chrome_path, f"--remote-debugging-port={port}"])
-        logging.info(f"Launched Chrome with remote debugging on port {port}.")
+        logging.info(f"Launched Chrome with remote debugging on port {port} at '{chrome_path}'.")
         time.sleep(3)  # Wait for Chrome to start
         return True
     except Exception as e:
@@ -98,8 +135,11 @@ def launch_chrome_in_debug_mode(port=CHROME_DEBUGGER_PORT):
         logging.error(f"Failed to launch Chrome: {e}", exc_info=True)
         return False
 
+# -----------------------------------------------------------------------------
+# 3. INITIALIZE SELENIUM WEBDRIVER
+# -----------------------------------------------------------------------------
 def initialize_driver():
-    """Initialize Selenium WebDriver."""
+    """Initialize Selenium WebDriver for the previously launched Chrome in debug mode."""
     chrome_options = Options()
     chrome_options.add_experimental_option("debuggerAddress", f"localhost:{CHROME_DEBUGGER_PORT}")
     try:
@@ -111,14 +151,18 @@ def initialize_driver():
         logging.error(f"Failed to initialize Selenium WebDriver: {e}", exc_info=True)
         return None
 
+# -----------------------------------------------------------------------------
+# 4. ORDER SCRAPING + CSV SAVING
+# -----------------------------------------------------------------------------
 def save_order_data(order_data, csv_file_name):
-    """Save scraped order data to CSV."""
-    csv_path = app_dir / csv_file_name
+    """Save scraped data to a CSV in the same directory as this script."""
+    csv_path = Path(__file__).parent / csv_file_name
     file_exists = csv_path.is_file()
-
     try:
         with csv_path.open(mode='a', newline='', encoding='utf-8') as file:
-            writer = csv.DictWriter(file, fieldnames=['Order URL', 'Order Number', 'Customer Name', 'Phone Number', 'Email Address'])
+            writer = csv.DictWriter(file, fieldnames=[
+                'Order URL', 'Order Number', 'Customer Name', 'Phone Number', 'Email Address'
+            ])
             if not file_exists:
                 writer.writeheader()
             writer.writerows(order_data)
@@ -129,14 +173,18 @@ def save_order_data(order_data, csv_file_name):
         logging.error(f"Failed to save data to CSV: {e}", exc_info=True)
 
 def scrape_orders(driver):
-    """Scrape order data from Weedmaps."""
+    """Scrape order data from Weedmaps, using the current browser session."""
+    # Wait for main orders page
     try:
-        WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.CLASS_NAME, 'table__TableRow-sc-xx3up4-13')))
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.CLASS_NAME, 'table__TableRow-sc-xx3up4-13'))
+        )
     except Exception as e:
         st.error(f"Main orders page failed to load: {e}")
         logging.error(f"Main orders page failed to load: {e}", exc_info=True)
         return 0, 0
 
+    # Collect all order URLs
     try:
         orders = driver.find_elements(By.XPATH, "//a[contains(@class, 'order-id-link__IDLink-sc-a7pvg2-0')]")
         order_urls = [o.get_attribute('href') for o in orders if o.get_attribute('href')]
@@ -146,15 +194,24 @@ def scrape_orders(driver):
         return 0, 0
 
     order_data = []
-    for idx, order_url in enumerate(order_urls[:1]):  # For TEST_MODE, scrape only 1 order
+    total_orders = len(order_urls)
+    # If you only want to test with 1 order, keep the slice [:1].
+    # If you want all, remove the slice entirely.
+    for idx, order_url in enumerate(order_urls[:1]):
         try:
             driver.get(order_url)
-            WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]")))
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]"))
+            )
 
-            order_number = driver.find_element(By.XPATH, "//span[contains(@class, 'styles__OrderId')]").text.strip().replace('Order #', '')
-            customer_name = driver.find_element(By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]").text.strip()
-            phone_number = driver.find_element(By.XPATH, "//p[contains(text(), 'Phone number')]/following-sibling::div").text.strip()
-            email_address = driver.find_element(By.XPATH, "//p[contains(text(), 'Email address')]/following-sibling::p").text.strip()
+            order_number = driver.find_element(By.XPATH, "//span[contains(@class, 'styles__OrderId')]") \
+                                 .text.strip().replace('Order #', '')
+            customer_name = driver.find_element(By.XPATH, "//h4[contains(@class, 'styles__DetailRecipientName')]") \
+                                  .text.strip()
+            phone_number = driver.find_element(By.XPATH, "//p[contains(text(), 'Phone number')]/following-sibling::div") \
+                                 .text.strip()
+            email_address = driver.find_element(By.XPATH, "//p[contains(text(), 'Email address')]/following-sibling::p") \
+                                  .text.strip()
 
             order_data.append({
                 'Order URL': order_url,
@@ -170,20 +227,21 @@ def scrape_orders(driver):
             continue
 
     save_order_data(order_data, CSV_FILE_NAME)
-    return len(order_urls), len(order_data)
+    return total_orders, len(order_data)
 
-# === Sidebar UI ===
+# -----------------------------------------------------------------------------
+# 5. STREAMLIT UI
+# -----------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### Empowering Cannabis Operators 🍃")
     with st.expander("Instructions 🍃"):
         st.write("""
-        1. Click **Open Chrome** to launch Chrome in debug mode.
-        2. Use the opened Chrome window to navigate and filter orders.
-        3. Click **Scrape Orders** to fetch your order data.
+        1. **Open Chrome** (in debug mode).
+        2. In the opened Chrome window, log in or set filters.
+        3. **Scrape Orders** to fetch your data.
         """)
     st.markdown("Crafted with care for cannabis operators 🌱")
 
-# === Main UI ===
 st.title("Weedmaps Order Scraper 🍃")
 
 st.subheader("Setup 🛠")
@@ -193,8 +251,22 @@ if st.button('Open Chrome'):
         if driver:
             st.session_state.driver = driver
             driver.get(ALL_ORDERS_URL)
+            st.success("Chrome is ready! Go to the launched Chrome window, set date filters, then scrape.")
 
 st.subheader("Scraping 🍀")
 if st.button('Scrape Orders'):
-    if st.session_state.driver:
-        scrape_orders(st.session_state.driver)
+    if st.session_state.driver is None:
+        st.error("Chrome is not open or driver not initialized. Click 'Open Chrome' first.")
+    else:
+        st.write("Scraping orders... Please wait. ⏳")
+        try:
+            total_orders, scraped = scrape_orders(st.session_state.driver)
+            st.success(f"Scraped {scraped} of {total_orders} orders. 🎉")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+        finally:
+            # Quit driver if you want to close browser after scraping.
+            # If you prefer to keep Chrome open, comment out these lines.
+            st.session_state.driver.quit()
+            st.session_state.driver = None
+            st.info("Browser closed after scraping.")
